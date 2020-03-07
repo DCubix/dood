@@ -3,8 +3,9 @@
 
 #include <stdint.h>
 
-#define _dood_comp_cast(x) (uint8_t)((x) * 255.0f)
+#define _dood_comp_cast(x) ((uint8_t)((x) * 255.0f) & 0xFF)
 #define _dood_lerp(a, b, t) ((1.0f - (t)) * (a) + (b) * (t))
+#define _dood_clamp(a, mi, ma) ((a) >= (ma) ? (ma) : (a) <= (mi) ? (mi) : (a))
 
 enum BlendMode {
 	BM_OPAQUE = 0,
@@ -17,46 +18,52 @@ typedef struct Color_t {
 	float r, g, b, a;
 } Color;
 
-typedef struct Canvas_t {
-	const int width, height;
+struct Canvas_t;
+typedef struct Canvas_t* Canvas;
+
+extern Canvas dood_canvas_new(int width, int height);
+extern void dood_canvas_free(Canvas canvas);
+
+extern void dood_canvas_clear(Canvas canvas);
+extern void dood_canvas_draw_point(Canvas canvas, int x, int y);
+
+extern void dood_canvas_get(Canvas canvas, int x, int y, float* r, float* g, float* b, float* a);
+extern void dood_canvas_get_size(Canvas canvas, int* w, int* h);
+
+extern void dood_canvas_set_blend(Canvas canvas, int blendMode);
+extern void dood_canvas_set_draw_color(Canvas canvas, float r, float g, float b, float a);
+
+extern void dood_canvas_save_ppm(Canvas canvas, const char* outFile);
+
+#ifdef DOOD_IMPLEMENTATION
+
+#include <stdlib.h>
+#include <memory.h>
+
+struct Canvas_t {
+	int width, height;
 	uint8_t* pixels;
 
 	Color drawColor;
 	int blendMode;
-} Canvas;
+};
 
-extern Canvas* dood_canvas_new(int width, int height);
-extern void dood_canvas_free(Canvas* canvas);
-
-extern void dood_canvas_clear(Canvas* canvas);
-extern void dood_canvas_draw_point(Canvas* canvas, int x, int y);
-
-extern void dood_canvas_get(Canvas* canvas, int x, int y, float* r, float* g, float* b, float* a);
-
-extern void dood_canvas_set_blend(Canvas* canvas, int blendMode);
-extern void dood_canvas_set_draw_color(Canvas* canvas, float r, float g, float b, float a);
-
-extern void dood_canvas_save_ppm(Canvas* canvas, const char* outFile);
-
-#ifdef DOOD_IMPLEMENTATION
-#include <stdlib.h>
-#include <memory.h>
-Canvas* dood_canvas_new(int width, int height) {
-	Canvas* cnv = (Canvas*) malloc(sizeof(Canvas));
-	*(int*)&cnv->width = width;
-	*(int*)&cnv->height = height;
+Canvas dood_canvas_new(int width, int height) {
+	Canvas cnv = (Canvas) malloc(sizeof(*cnv));
+	cnv->width = width;
+	cnv->height = height;
 	cnv->blendMode = BM_OPAQUE;
 	cnv->pixels = (uint8_t*) malloc(sizeof(uint8_t) * width * height * 4);
 	dood_canvas_set_draw_color(cnv, 0, 0, 0, 1.0f);
 	return cnv;
 }
 
-void dood_canvas_free(Canvas* canvas) {
+void dood_canvas_free(Canvas canvas) {
 	free(canvas->pixels);
 	free(canvas);
 }
 
-void dood_canvas_draw_point(Canvas* canvas, int x, int y) {
+void dood_canvas_draw_point(Canvas canvas, int x, int y) {
 	if (x < 0 || x >= canvas->width || y < 0 || y >= canvas->height) {
 		return;
 	}
@@ -83,7 +90,6 @@ void dood_canvas_draw_point(Canvas* canvas, int x, int y) {
 			r += pr;
 			g += pg;
 			b += pb;
-			a += pa;
 		} break;
 		case BM_ALPHA_BLEND: {
 			float pr, pg, pb, pa;
@@ -95,13 +101,18 @@ void dood_canvas_draw_point(Canvas* canvas, int x, int y) {
 		} break;
 	}
 
+	r = _dood_clamp(r, 0.0f, 1.0f);
+	g = _dood_clamp(g, 0.0f, 1.0f);
+	b = _dood_clamp(b, 0.0f, 1.0f);
+	a = _dood_clamp(a, 0.0f, 1.0f);
+
 	canvas->pixels[i + 0] = _dood_comp_cast(r);
 	canvas->pixels[i + 1] = _dood_comp_cast(g);
 	canvas->pixels[i + 2] = _dood_comp_cast(b);
 	canvas->pixels[i + 3] = _dood_comp_cast(a);
 }
 
-void dood_canvas_get(Canvas* canvas, int x, int y, float* r, float* g, float* b, float* a) {
+void dood_canvas_get(Canvas canvas, int x, int y, float* r, float* g, float* b, float* a) {
 	if (x < 0 || x >= canvas->width || y < 0 || y >= canvas->height) {
 		return;
 	}
@@ -112,18 +123,23 @@ void dood_canvas_get(Canvas* canvas, int x, int y, float* r, float* g, float* b,
 	if (a) *a = (float) canvas->pixels[i + 3] / 255.0f;
 }
 
-void dood_canvas_set_draw_color(Canvas* canvas, float r, float g, float b, float a) {
+void dood_canvas_get_size(Canvas canvas, int* w, int* h) {
+	if (w) *w = canvas->width;
+	if (h) *h = canvas->height;
+}
+
+void dood_canvas_set_draw_color(Canvas canvas, float r, float g, float b, float a) {
 	canvas->drawColor.r = r;
 	canvas->drawColor.g = g;
 	canvas->drawColor.b = b;
 	canvas->drawColor.a = a;
 }
 
-void dood_canvas_set_blend(Canvas* canvas, int blendMode) {
+void dood_canvas_set_blend(Canvas canvas, int blendMode) {
 	canvas->blendMode = blendMode;
 }
 
-void dood_canvas_clear(Canvas* canvas) {
+void dood_canvas_clear(Canvas canvas) {
 	for (int i = 0; i < canvas->width * canvas->height * 4; i += 4) {
 		canvas->pixels[i + 0] = _dood_comp_cast(canvas->drawColor.r);
 		canvas->pixels[i + 1] = _dood_comp_cast(canvas->drawColor.g);
@@ -132,7 +148,7 @@ void dood_canvas_clear(Canvas* canvas) {
 	}
 }
 
-void dood_canvas_save_ppm(Canvas* canvas, const char* outFile) {
+void dood_canvas_save_ppm(Canvas canvas, const char* outFile) {
 	FILE* fp = fopen(outFile, "w");
 	if (fp) {
 		fprintf(fp, "P3\n");
