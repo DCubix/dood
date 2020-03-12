@@ -19,11 +19,21 @@ typedef struct Color_t {
 	float r, g, b, a;
 } Color;
 
+#define color(r, g, b, a) ((Color){ (r), (g), (b), (a) })
+
 struct Canvas_t;
 typedef struct Canvas_t* Canvas;
 
+typedef Color (*Shader)(Canvas, float, float);
+
 extern Canvas dood_canvas_new(int width, int height);
 extern void dood_canvas_free(Canvas canvas);
+
+extern void _dood_canvas_internal_point(
+	Canvas canvas,
+	int x, int y,
+	int rx, int ry, int rw, int rh
+);
 
 extern void dood_canvas_clear(Canvas canvas);
 extern void dood_canvas_put(Canvas canvas, int x, int y, float r, float g, float b, float a);
@@ -43,6 +53,7 @@ extern void dood_canvas_get_size(Canvas canvas, int* w, int* h);
 
 extern void dood_canvas_set_blend(Canvas canvas, int blendMode);
 extern void dood_canvas_set_draw_color(Canvas canvas, float r, float g, float b, float a);
+extern void dood_canvas_set_shader(Canvas canvas, Shader shader);
 extern void dood_canvas_set_draw_color_gray(Canvas canvas, float v);
 
 extern void dood_canvas_set_clip(Canvas canvas, int x, int y, int w, int h);
@@ -65,6 +76,7 @@ struct Canvas_t {
 
 	Color drawColor;
 	int blendMode;
+	Shader shader;
 };
 
 Canvas dood_canvas_new(int width, int height) {
@@ -73,6 +85,7 @@ Canvas dood_canvas_new(int width, int height) {
 	cnv->height = height;
 	cnv->blendMode = BM_OPAQUE;
 	cnv->pixels = (uint8_t*) malloc(sizeof(uint8_t) * width * height * 4);
+	cnv->shader = NULL;
 	dood_canvas_remove_clip(cnv);
 	dood_canvas_set_draw_color(cnv, 0, 0, 0, 1.0f);
 	return cnv;
@@ -157,8 +170,24 @@ void dood_canvas_put(Canvas canvas, int x, int y, float r, float g, float b, flo
 	buf[i + 3] = _dood_comp_cast(a);
 }
 
+void _dood_canvas_internal_point(
+	Canvas canvas,
+	int x, int y,
+	int rx, int ry, int rw, int rh
+) {
+	float fx = (float)(x - rx) / (float)rw;
+	float fy = (float)(y - ry) / (float)rh;
+
+	Color col = canvas->drawColor;
+	if (canvas->shader) {
+		col = canvas->shader(canvas, fx, fy);
+	}
+
+	dood_canvas_put(canvas, x, y, col.r, col.g, col.b, col.a);
+}
+
 void dood_canvas_draw_point(Canvas canvas, int x, int y) {
-	dood_canvas_put(canvas, x, y, canvas->drawColor.r, canvas->drawColor.g, canvas->drawColor.b, canvas->drawColor.a);
+	_dood_canvas_internal_point(canvas, x, y, 0, 0, canvas->width, canvas->height);
 }
 
 void dood_canvas_draw_line(Canvas canvas, int x1, int y1, int x2, int y2) {
@@ -173,7 +202,7 @@ void dood_canvas_draw_line(Canvas canvas, int x1, int y1, int x2, int y2) {
 	int y = y1;
 
 	while (1) {
-		dood_canvas_draw_point(canvas, x, y);
+		_dood_canvas_internal_point(canvas, x, y, x1, y1, x2 - x1, y2 - y1);
 		if (x == x2 && y == y2) break;
 		e2 = 2 * err;
 		if (e2 >= dy) { err += dy; x += sx; }
@@ -191,7 +220,7 @@ void dood_canvas_draw_rect(Canvas canvas, int x, int y, int w, int h) {
 void dood_canvas_fill_rect(Canvas canvas, int x, int y, int w, int h) {
 	for (int py = y; py < y + h; py++) {
 		for (int px = x; px < x + w; px++) {
-			dood_canvas_draw_point(canvas, px, py);
+			_dood_canvas_internal_point(canvas, px, py, x, y, w, h);
 		}
 	}
 }
@@ -221,6 +250,10 @@ void dood_canvas_set_draw_color(Canvas canvas, float r, float g, float b, float 
 
 void dood_canvas_set_draw_color_gray(Canvas canvas, float v) {
 	dood_canvas_set_draw_color(canvas, v, v, v, 1.0f);
+}
+
+void dood_canvas_set_shader(Canvas canvas, Shader shader) {
+	canvas->shader = shader;
 }
 
 void dood_canvas_set_blend(Canvas canvas, int blendMode) {
