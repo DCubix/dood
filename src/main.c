@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
 	dood_canvas_free(ok);
 
 	dood_canvas_set_shader(cnv, &blur);
-	for (int pass = 0; pass < 10; pass++)
+	for (int pass = 0; pass < 5; pass++)
 		dood_canvas_fill_rect(cnv, 0, 0, 256, 256);
 
 	dood_canvas_save_ppm(cnv, "out.ppm");
