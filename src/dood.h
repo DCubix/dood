@@ -50,7 +50,7 @@ extern void dood_canvas_remove_clip(Canvas canvas);
 
 extern void dood_canvas_save_ppm(Canvas canvas, const char* outFile);
 
-extern uint8_t* dood_canvas_get_buffer(Canvas canvas, int drawBuffer);
+extern uint8_t* dood_canvas_get_buffer(Canvas canvas);
 
 #ifdef DOOD_IMPLEMENTATION
 
@@ -64,7 +64,7 @@ struct Canvas_t {
 	int clip[4];
 
 	Color drawColor;
-	int blendMode, drawBuffer;
+	int blendMode;
 };
 
 Canvas dood_canvas_new(int width, int height) {
@@ -108,6 +108,10 @@ Canvas dood_canvas_load_ppm(const char* fileName) {
 void dood_canvas_free(Canvas canvas) {
 	free(canvas->pixels);
 	free(canvas);
+}
+
+uint8_t* dood_canvas_get_buffer(Canvas canvas) {
+	return canvas->pixels;
 }
 
 void dood_canvas_put(Canvas canvas, int x, int y, float r, float g, float b, float a) {
@@ -206,10 +210,6 @@ void dood_canvas_get(Canvas canvas, int x, int y, float* r, float* g, float* b, 
 void dood_canvas_get_size(Canvas canvas, int* w, int* h) {
 	if (w) *w = canvas->width;
 	if (h) *h = canvas->height;
-}
-
-void dood_canvas_set_draw_buffer(Canvas canvas, int drawBuffer) {
-	canvas->drawBuffer = drawBuffer;
 }
 
 void dood_canvas_set_draw_color(Canvas canvas, float r, float g, float b, float a) {
