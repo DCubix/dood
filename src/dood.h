@@ -24,7 +24,7 @@ typedef struct Color_t {
 struct Canvas_t;
 typedef struct Canvas_t* Canvas;
 
-typedef Color (*Shader)(Canvas, float, float);
+typedef Color (*Shader)(float, float, int, int, void*);
 
 extern Canvas dood_canvas_new(int width, int height);
 extern void dood_canvas_free(Canvas canvas);
@@ -53,7 +53,7 @@ extern void dood_canvas_get_size(Canvas canvas, int* w, int* h);
 
 extern void dood_canvas_set_blend(Canvas canvas, int blendMode);
 extern void dood_canvas_set_draw_color(Canvas canvas, float r, float g, float b, float a);
-extern void dood_canvas_set_shader(Canvas canvas, Shader shader);
+extern void dood_canvas_set_shader(Canvas canvas, Shader shader, void* userData);
 extern void dood_canvas_set_draw_color_gray(Canvas canvas, float v);
 
 extern void dood_canvas_set_clip(Canvas canvas, int x, int y, int w, int h);
@@ -68,6 +68,41 @@ extern uint8_t* dood_canvas_get_buffer(Canvas canvas);
 #include <stdlib.h>
 #include <memory.h>
 
+// BMP utils
+#pragma pack(push, 1)
+typedef struct BMPFileHeader_t {
+	uint16_t fileType;
+	uint32_t fileSize;
+	uint16_t reserved1, reserved2;
+	uint32_t offsetData;
+} BMPFileHeader;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct BMPInfoHeader_t {
+	uint32_t size;
+	int32_t width;
+	int32_t height;
+
+	uint16_t planes;
+	uint16_t bitCount;
+	uint32_t compression;
+	uint32_t sizeImage;
+	int32_t xPixelsPerMeter;
+	int32_t yPixelsPerMeter;
+	uint32_t colorsUsed;
+	uint32_t colorsImportant;
+} BMPInfoHeader;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct BMPColorHeader_t {
+	uint32_t redMask, greenMask, blueMask, alphaMask;
+	uint32_t colorSpaceType;
+	uint32_t unused[16];
+} BMPColorHeader;
+#pragma pack(pop)
+
 struct Canvas_t {
 	int width, height;
 
@@ -76,7 +111,9 @@ struct Canvas_t {
 
 	Color drawColor;
 	int blendMode;
+
 	Shader shader;
+	void* shaderUserData;
 };
 
 Canvas dood_canvas_new(int width, int height) {
@@ -86,6 +123,7 @@ Canvas dood_canvas_new(int width, int height) {
 	cnv->blendMode = BM_OPAQUE;
 	cnv->pixels = (uint8_t*) malloc(sizeof(uint8_t) * width * height * 4);
 	cnv->shader = NULL;
+	cnv->shaderUserData = NULL;
 	dood_canvas_remove_clip(cnv);
 	dood_canvas_set_draw_color(cnv, 0, 0, 0, 1.0f);
 	return cnv;
@@ -114,6 +152,100 @@ Canvas dood_canvas_load_ppm(const char* fileName) {
 		return cnv;
 
 		fclose(fp);
+	}
+	return NULL;
+}
+
+uint32_t make_stride_aligned(uint32_t row_stride, uint32_t align_stride) {
+	uint32_t new_stride = row_stride;
+	while (new_stride % align_stride != 0) {
+		new_stride++;
+	}
+	return new_stride;
+}
+
+Canvas dood_canvas_load_bmp(const char* fileName) {
+	FILE* fp = fopen(fileName, "rb");
+	if (fp) {
+		BMPFileHeader fileHeader;
+		fread(&fileHeader, sizeof(BMPFileHeader), 1, fp);
+		if (fileHeader.fileType != 0x4D42) {
+			printf("Invalid image.");
+			fclose(fp);
+			return NULL;
+		}
+
+		BMPInfoHeader infoHeader;
+		memset(&infoHeader, 0, sizeof(BMPInfoHeader));
+		infoHeader.planes = 1;
+
+		BMPColorHeader expectedColorHeader, colorHeader;
+		memset(&expectedColorHeader, 0, sizeof(BMPInfoHeader));
+		expectedColorHeader.redMask = 0x00ff0000;
+		expectedColorHeader.greenMask = 0x0000ff00;
+		expectedColorHeader.blueMask = 0x000000ff;
+		expectedColorHeader.alphaMask = 0xff000000;
+		expectedColorHeader.colorSpaceType = 0x73524742;
+
+		fread(&infoHeader, sizeof(BMPInfoHeader), 1, fp);
+		if (infoHeader.bitCount == 32) {
+			if (infoHeader.size >= sizeof(BMPInfoHeader) + sizeof(BMPColorHeader)) {
+				fread(&colorHeader, sizeof(BMPColorHeader), 1, fp);
+
+				if (expectedColorHeader.alphaMask != colorHeader.alphaMask ||
+					expectedColorHeader.blueMask != colorHeader.blueMask ||
+					expectedColorHeader.greenMask != colorHeader.greenMask ||
+					expectedColorHeader.redMask != colorHeader.redMask)
+				{
+					printf("Invalid color mask.");
+					fclose(fp);
+					return NULL;
+				}
+
+				if (expectedColorHeader.colorSpaceType != colorHeader.colorSpaceType) {
+					printf("Invalid color space type.");
+					fclose(fp);
+					return NULL;
+				}
+			} else {
+				printf("The file does not contain bit mask information.");
+				fclose(fp);
+				return NULL;
+			}
+		}
+
+		// Jump to the pixel data
+		rewind(fp);
+		fseek(fp, fileHeader.offsetData, SEEK_SET);
+
+		if (infoHeader.height < 0) {
+			printf("The origin must be at the bottom-left corner!");
+			fclose(fp);
+			return NULL;
+		}
+		
+		int channels = infoHeader.bitCount / 8;
+		Canvas cnv = dood_canvas_new(infoHeader.width, infoHeader.height);
+
+		int paddedRowSize = (int)(4 * ceil((float)infoHeader.width / 4.0f)) * channels;
+		int unpaddedRowSize = infoHeader.width * channels;
+
+		for (int y = infoHeader.height - 1; y >= 0; y--) {
+			for (int x = 0; x < unpaddedRowSize; x+=channels) {
+				uint8_t col[4] = { 0, 0, 0, 0xFF };
+				fread(col, sizeof(uint8_t), channels, fp);
+
+				float fr = (float)col[2] / 255.0f;
+				float fg = (float)col[1] / 255.0f;
+				float fb = (float)col[0] / 255.0f;
+				float fa = (float)col[3] / 255.0f;
+				dood_canvas_put(cnv, x / channels, y, fr, fg, fb, fa);
+			}
+		}
+
+		fclose(fp);
+
+		return cnv;
 	}
 	return NULL;
 }
@@ -180,7 +312,7 @@ void _dood_canvas_internal_point(
 
 	Color col = canvas->drawColor;
 	if (canvas->shader) {
-		col = canvas->shader(canvas, fx, fy);
+		col = canvas->shader(fx, fy, canvas->width, canvas->height, canvas->shaderUserData);
 	}
 
 	dood_canvas_put(canvas, x, y, col.r, col.g, col.b, col.a);
@@ -227,6 +359,10 @@ void dood_canvas_fill_rect(Canvas canvas, int x, int y, int w, int h) {
 
 void dood_canvas_get(Canvas canvas, int x, int y, float* r, float* g, float* b, float* a) {
 	if (x < 0 || x >= canvas->width || y < 0 || y >= canvas->height) {
+		*r = 0.0f;
+		*g = 0.0f;
+		*b = 0.0f;
+		*a = 0.0f;
 		return;
 	}
 	int i = (x + y * canvas->width) * 4;
@@ -252,8 +388,9 @@ void dood_canvas_set_draw_color_gray(Canvas canvas, float v) {
 	dood_canvas_set_draw_color(canvas, v, v, v, 1.0f);
 }
 
-void dood_canvas_set_shader(Canvas canvas, Shader shader) {
+void dood_canvas_set_shader(Canvas canvas, Shader shader, void* userData) {
 	canvas->shader = shader;
+	canvas->shaderUserData = userData;
 }
 
 void dood_canvas_set_blend(Canvas canvas, int blendMode) {

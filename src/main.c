@@ -4,9 +4,11 @@
 #define DOOD_IMPLEMENTATION
 #include "dood.h"
 
-#define BLUR_KERNEL 9
+#define BLUR_KERNEL 13
 
-Color blur(Canvas c, float x, float y) {
+Color blur(float x, float y, int cw, int ch, void* ud) {
+	Canvas c = (Canvas) ud;
+
 	int w, h;
 	dood_canvas_get_size(c, &w, &h);
 
@@ -35,19 +37,16 @@ Color blur(Canvas c, float x, float y) {
 }
 
 int main(int argc, char** argv) {
-	Canvas cnv = dood_canvas_new(256, 256);
+	Canvas ok = dood_canvas_load_bmp("eu.bmp");
+	Canvas cnv = dood_canvas_new(ok->width, ok->height);
 	dood_canvas_clear(cnv);
 	
-	Canvas ok = dood_canvas_load_ppm("ok.ppm");
-	dood_canvas_draw_canvas(cnv, ok, 0, 0, 128, 128,  64, 64, 128, 128);
-	dood_canvas_free(ok);
-
-	dood_canvas_set_shader(cnv, &blur);
-	for (int pass = 0; pass < 5; pass++)
-		dood_canvas_fill_rect(cnv, 0, 0, 256, 256);
+	dood_canvas_set_shader(cnv, &blur, ok);
+	dood_canvas_fill_rect(cnv, 0, 0, ok->width, ok->height);
 
 	dood_canvas_save_ppm(cnv, "out.ppm");
 
+	dood_canvas_free(ok);
 	dood_canvas_free(cnv);
 	return 0;
 }
