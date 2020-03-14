@@ -49,6 +49,7 @@ extern void dood_canvas_draw_canvas(
 );
 
 extern void dood_canvas_get(Canvas canvas, int x, int y, float* r, float* g, float* b, float* a);
+extern void dood_canvas_getf(Canvas canvas, float x, float y, float* r, float* g, float* b, float* a);
 extern void dood_canvas_get_size(Canvas canvas, int* w, int* h);
 
 extern void dood_canvas_set_blend(Canvas canvas, int blendMode);
@@ -60,6 +61,7 @@ extern void dood_canvas_set_clip(Canvas canvas, int x, int y, int w, int h);
 extern void dood_canvas_remove_clip(Canvas canvas);
 
 extern void dood_canvas_save_ppm(Canvas canvas, const char* outFile);
+extern void dood_canvas_save_bmp(Canvas canvas, const char* outFile);
 
 extern uint8_t* dood_canvas_get_buffer(Canvas canvas);
 
@@ -359,10 +361,10 @@ void dood_canvas_fill_rect(Canvas canvas, int x, int y, int w, int h) {
 
 void dood_canvas_get(Canvas canvas, int x, int y, float* r, float* g, float* b, float* a) {
 	if (x < 0 || x >= canvas->width || y < 0 || y >= canvas->height) {
-		*r = 0.0f;
-		*g = 0.0f;
-		*b = 0.0f;
-		*a = 0.0f;
+		if (r) *r = 0.0f;
+		if (g) *g = 0.0f;
+		if (b) *b = 0.0f;
+		if (a) *a = 0.0f;
 		return;
 	}
 	int i = (x + y * canvas->width) * 4;
@@ -370,6 +372,30 @@ void dood_canvas_get(Canvas canvas, int x, int y, float* r, float* g, float* b, 
 	if (g) *g = (float) canvas->pixels[i + 1] / 255.0f;
 	if (b) *b = (float) canvas->pixels[i + 2] / 255.0f;
 	if (a) *a = (float) canvas->pixels[i + 3] / 255.0f;
+}
+
+void dood_canvas_getf(Canvas canvas, float x, float y, float* r, float* g, float* b, float* a) {
+	x = x * (float) canvas->width;
+	y = y * (float) canvas->height;
+
+	int ix = (int)floorf(x);
+	int iy = (int)floorf(y);
+
+	float ur = x - (float)ix;
+	float vr = y - (float)iy;
+	float uo = 1.0f - ur;
+	float vo = 1.0f - vr;
+
+	float col1[4], col2[4], col3[4], col4[4];
+	dood_canvas_get(canvas, ix, iy, &col1[0], &col1[1], &col1[2], &col1[3]);
+	dood_canvas_get(canvas, ix + 1, iy, &col2[0], &col2[1], &col2[2], &col2[3]);
+	dood_canvas_get(canvas, ix, iy + 1, &col3[0], &col3[1], &col3[2], &col3[3]);
+	dood_canvas_get(canvas, ix + 1, iy + 1, &col4[0], &col4[1], &col4[2], &col4[3]);
+
+	if (r) *r = (col1[0] * uo + col2[0] * ur) * vo + (col3[0] * uo + col4[0] * ur) * vr;
+	if (g) *g = (col1[1] * uo + col2[1] * ur) * vo + (col3[1] * uo + col4[1] * ur) * vr;
+	if (b) *b = (col1[2] * uo + col2[2] * ur) * vo + (col3[2] * uo + col4[2] * ur) * vr;
+	if (a) *a = (col1[3] * uo + col2[3] * ur) * vo + (col3[3] * uo + col4[3] * ur) * vr;
 }
 
 void dood_canvas_get_size(Canvas canvas, int* w, int* h) {
@@ -449,6 +475,49 @@ void dood_canvas_save_ppm(Canvas canvas, const char* outFile) {
 			uint8_t b = canvas->pixels[i + 2];
 			fprintf(fp, "%3d %3d %3d\n", r, g, b);
 		}
+		fclose(fp);
+	}
+}
+
+void dood_canvas_save_bmp(Canvas canvas, const char* outFile) {
+	FILE* fp = fopen(outFile, "wb");
+	if (fp) {
+		uint8_t pad[3] = { 0 };
+		int padding = (4 - (canvas->width * 3) % 4) % 4;
+
+		BMPFileHeader fileHeader;
+		memset(&fileHeader, 0, sizeof(BMPFileHeader));
+		fileHeader.fileSize = sizeof(BMPFileHeader) + sizeof(BMPInfoHeader) + (4 * canvas->width + padding) * canvas->height;
+		fileHeader.fileType = 0x4D42;
+		fileHeader.offsetData = sizeof(BMPFileHeader) + sizeof(BMPInfoHeader);
+
+		BMPInfoHeader infoHeader;
+		memset(&infoHeader, 0, sizeof(BMPInfoHeader));
+		infoHeader.bitCount = 24;
+		infoHeader.planes = 1;
+		infoHeader.size = sizeof(BMPInfoHeader);
+		infoHeader.width = canvas->width;
+		infoHeader.height = canvas->height;
+		infoHeader.xPixelsPerMeter = 2000;
+		infoHeader.yPixelsPerMeter = 2000;
+
+		fwrite(&fileHeader, sizeof(BMPFileHeader), 1, fp);
+		fwrite(&infoHeader, sizeof(BMPInfoHeader), 1, fp);
+
+		for (int y = canvas->height - 1; y >= 0; y--) {
+			for (int x = 0; x < canvas->width; x++) {
+				float r, g, b;
+				dood_canvas_get(canvas, x, y, &r, &g, &b, NULL);
+				uint8_t cr = _dood_comp_cast(r);
+				uint8_t cg = _dood_comp_cast(g);
+				uint8_t cb = _dood_comp_cast(b);
+				fwrite(&cb, 1, 1, fp);
+				fwrite(&cg, 1, 1, fp);
+				fwrite(&cr, 1, 1, fp);
+			}
+			fwrite(pad, 1, padding, fp);
+		}
+
 		fclose(fp);
 	}
 }
